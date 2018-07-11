@@ -1,3 +1,5 @@
 DATA/
 LABEL/
 .idea/
+*.csv
+*.csv#

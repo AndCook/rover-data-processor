@@ -155,18 +155,16 @@ def get_sol_from_filepath(filepath):
     return expr.search(filepath).group(1)
 
 
-def compose_custom_rows(filepath, timestamp_col_num, pressure_col_num, lbl_info):
-    custom_rows = [[
-        TIMESTAMP_COL_NAME.strip('\"'),
-        PRESSURE_ESTIMATE_COL_NAME.strip('\"'),
-        *lbl_info.keys()
-    ]]
+def compose_custom_rows(results_filepath,
+                        data_filepath,
+                        timestamp_col_num,
+                        pressure_col_num,
+                        lbl_info_values):
+    with open(data_filepath, 'r') as data_file, open(results_filepath, 'a') as results_file:
+        csv_writer = csv.writer(results_file)
 
-    with open(filepath, 'r') as f:
-        for row in csv.reader(f):
-            custom_rows.append([row[timestamp_col_num], row[pressure_col_num], *lbl_info.values()])
-
-    return custom_rows
+        for row in csv.reader(data_file):
+            csv_writer.writerow([row[timestamp_col_num], row[pressure_col_num], *lbl_info_values])
 
 
 def main():
@@ -186,7 +184,7 @@ def main():
         sol_to_acq_lbl_info[get_sol_from_filepath(filepath)] = \
             get_lbl_information(filepath, TARGET_LBL_FILE_KEYS)
 
-    result_rows = []
+    header_is_written = False
 
     for filepath in glob('DATA/SOL_?????_?????/SOL?????/*.TAB'):
         sol = get_sol_from_filepath(filepath)
@@ -194,24 +192,30 @@ def main():
         print('Calculating rows for sol {}...'.format(sol))
 
         lbl_info = sol_to_acq_lbl_info[sol]
-        result_rows.extend(compose_custom_rows(filepath,
-                                               int(timestamp_col_num),
-                                               int(pressure_col_num),
-                                               lbl_info))
 
-    # I'm just going to tell you... this is a very bad way to do it. I calculated just a fraction of
-    # the input data, and it was over 25,000 rows of data, which was too many for me to open in an
-    # open source excel program I have... I'm just doing it this way for you now because it is the
-    # most simplistic way. You may want to break the files down by sols or something... it really
-    # depends on how you want to do it. My guess is that you will probably have to process the data
-    # programmatically ;-)
-    print('Writing out to CSV file...')
+        lbl_info_keys, lbl_info_values = [], []
 
-    with open(args.resultsFilename, 'w') as f:
-        csv_writer = csv.writer(f)
+        for key in sorted(lbl_info):
+            lbl_info_keys.append(key)
+            lbl_info_values.append(lbl_info[key])
 
-        for row in result_rows:
-            csv_writer.writerow(row)
+        if not header_is_written:
+            with open(args.resultsFilename, 'w') as f:
+                csv_writer = csv.writer(f)
+
+                csv_writer.writerow([
+                    TIMESTAMP_COL_NAME.strip('\"'),
+                    PRESSURE_ESTIMATE_COL_NAME.strip('\"'),
+                    *lbl_info_keys
+                ])
+
+            header_is_written = True
+
+        compose_custom_rows(args.resultsFilename,
+                            filepath,
+                            int(timestamp_col_num),
+                            int(pressure_col_num),
+                            lbl_info_values)
 
 
 if __name__ == '__main__':
