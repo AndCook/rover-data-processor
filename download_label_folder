@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+wget -nH -np --cut-dirs=3 -r -l1 -A .FMT -e robots=off atmos.nmsu.edu/PDS/data/mslrem_0001/LABEL/
+
