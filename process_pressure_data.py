@@ -23,7 +23,8 @@ DEFAULT_RESULTS_CSV_FILE_NAME = 'results.csv'
 DEFAULT_MAX_ROW_COUNT = -1  # Either supply the maximum row count to write out or -1 to get all
 DEFAULT_TARGET_COL_NAMES = [  # Either supply target col names to source data from or [] to get all
     '\"TIMESTAMP\"',
-    '\"PRESSURE\"'
+    '\"PRESSURE\"',
+    '\"BOOM1_LOCAL_AIR_TEMP\"'
 ]
 
 # This variable is designed to be configurable
@@ -210,19 +211,6 @@ def get_sol_from_filepath(filepath):
     return expr.search(filepath).group(1)
 
 
-def extract_col_value(row, col_info_tuple):
-    """
-    Extracts a particular raw value from a row of data.
-
-    :param row:            Row of data
-    :param col_info_tuple: Tuple containing the number, name, and python type information about the
-                           column
-    :return:               Raw value of the column number provided in 'col_info_tuple' extracted
-                           from 'row'
-    """
-    return row[col_info_tuple[COL_TUPLE_NUM_INDEX] - 1]
-
-
 def extract_formatted_col_value(row, col_info_tuple):
     """
     Extracts a particular raw value from a row of data and formats it to be the proper python type
@@ -231,9 +219,14 @@ def extract_formatted_col_value(row, col_info_tuple):
     :param col_info_tuple: Tuple containing the number, name, and python type information about the
                            column
     :return:               Formatted value of the column number provided in 'col_info_tuple'
-                           extracted from 'row'
+                           extracted from 'row' or None if the cell is equal to "UNK"
     """
-    return col_info_tuple[COL_TUPLE_TYPE_INDEX](extract_col_value(row, col_info_tuple))
+    raw_value = row[col_info_tuple[COL_TUPLE_NUM_INDEX] - 1].strip()
+
+    if raw_value == 'UNK':
+        return None
+
+    return col_info_tuple[COL_TUPLE_TYPE_INDEX](raw_value)
 
 
 def compose_custom_rows(results_filepath,
@@ -266,8 +259,8 @@ def compose_custom_rows(results_filepath,
                 remaining_row_count -= 1
 
             csv_writer.writerow([
-                *[extract_formatted_col_value(row, col_info_tuple) for col_info_tuple in
-                  col_info_tuple_list if extract_col_value(row, col_info_tuple).strip() != 'UNK'],
+                *[extract_formatted_col_value(row, col_info_tuple)
+                  for col_info_tuple in col_info_tuple_list],
                 *lbl_info_values
             ])
 
