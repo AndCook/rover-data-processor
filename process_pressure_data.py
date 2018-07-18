@@ -12,21 +12,22 @@ BASE_DIR = path.dirname(path.realpath(__file__))
 TARGET_FMT_FILE = path.join(BASE_DIR, path.join('LABEL', 'MODRDR6.FMT'))
 OBJ_TOKENS = ['OBJECT', 'GROUP']
 MULTILINE_TOKENS = [('\"', '\"'), ('(', ')')]
+COL_DATA_TYPE_TO_PYTHON_TYPE = {
+    'ASCII_REAL': float,
+    'ASCII_INTEGER': int
+}
+COL_TUPLE_NUM_INDEX, COL_TUPLE_NAME_INDEX, COL_TUPLE_TYPE_INDEX = 0, 1, 2
 
 # Default values which are configurable via program input
 DEFAULT_RESULTS_CSV_FILE_NAME = 'results.csv'
-DEFAULT_MAX_ROW_COUNT = -1  # Either supply col names or -1 to get all
-DEFAULT_TARGET_COL_NAMES = [  # Either supply col names or [] to get all
+DEFAULT_MAX_ROW_COUNT = -1  # Either supply the maximum row count to write out or -1 to get all
+DEFAULT_TARGET_COL_NAMES = [  # Either supply target col names to source data from or [] to get all
     '\"TIMESTAMP\"',
     '\"PRESSURE\"'
 ]
 
 # This variable is designed to be configurable
-TARGET_LBL_INFO = [
-    'SPACECRAFT_CLOCK_START_TIME',
-    'SPACECRAFT_CLOCK_STOP_TIME',
-    'SOLAR_LONGITUDE'
-]
+TARGET_LBL_INFO = []
 
 
 def parse_structured_file(structured_file):
@@ -135,11 +136,11 @@ def get_col_info(fmt_file, target_col_names):
     :param fmt_file:         Structured .FMT file
     :param target_col_names: List of the names of the columns for which we want the corresponding
                              column, or an empty list
-    :return:                 A list of the names of the columns and a corresponding list of the
-                             corresponding column numbers which were extracted according to the
-                             target information
+    :return:                 A list of tuples containing the target column numbers, names, and
+                             python data types which were extracted according to the target
+                             information
     """
-    col_names, col_nums = [], []
+    col_info_tuple_list = []
 
     column_definitions = parse_structured_file(fmt_file)['COLUMN']
 
@@ -151,17 +152,22 @@ def get_col_info(fmt_file, target_col_names):
         if target_col_names:
             for target_col_name in target_col_names:
                 if column_definition['NAME'] == target_col_name:
-                    col_names.append(column_definition['NAME'])
-                    col_nums.append(column_definition['COLUMN_NUMBER'])
+                    col_info_tuple_list.append((
+                        int(column_definition['COLUMN_NUMBER']),
+                        column_definition['NAME'].strip('\"'),
+                        COL_DATA_TYPE_TO_PYTHON_TYPE[column_definition['DATA_TYPE']]
+                    ))
         else:
-            col_names.append(column_definition['NAME'])
-            col_nums.append(column_definition['COLUMN_NUMBER'])
+            col_info_tuple_list.append((
+                int(column_definition['COLUMN_NUMBER']),
+                column_definition['NAME'].strip('\"'),
+                COL_DATA_TYPE_TO_PYTHON_TYPE[column_definition['DATA_TYPE']]
+            ))
 
-    assert not target_col_names or \
-           (len(target_col_names) == len(col_names) and len(target_col_names) == len(col_nums)), \
+    assert not target_col_names or (len(target_col_names) == len(col_info_tuple_list)), \
         'Not all target col names were found in the supplied label file'
 
-    return col_names, col_nums
+    return col_info_tuple_list
 
 
 def get_lbl_info(lbl_file_info, target_info):
@@ -204,10 +210,36 @@ def get_sol_from_filepath(filepath):
     return expr.search(filepath).group(1)
 
 
+def extract_col_value(row, col_info_tuple):
+    """
+    Extracts a particular raw value from a row of data.
+
+    :param row:            Row of data
+    :param col_info_tuple: Tuple containing the number, name, and python type information about the
+                           column
+    :return:               Raw value of the column number provided in 'col_info_tuple' extracted
+                           from 'row'
+    """
+    return row[col_info_tuple[COL_TUPLE_NUM_INDEX] - 1]
+
+
+def extract_formatted_col_value(row, col_info_tuple):
+    """
+    Extracts a particular raw value from a row of data and formats it to be the proper python type
+
+    :param row:            Row of data
+    :param col_info_tuple: Tuple containing the number, name, and python type information about the
+                           column
+    :return:               Formatted value of the column number provided in 'col_info_tuple'
+                           extracted from 'row'
+    """
+    return col_info_tuple[COL_TUPLE_TYPE_INDEX](extract_col_value(row, col_info_tuple))
+
+
 def compose_custom_rows(results_filepath,
                         data_filepath,
                         remaining_row_count,
-                        col_nums,
+                        col_info_tuple_list,
                         lbl_info_values):
     """
     Writes out data to the file at 'results_filepath' using data from fields corresponding to the
@@ -218,8 +250,8 @@ def compose_custom_rows(results_filepath,
     :param data_filepath:       Filepath to the .TAB data file
     :param remaining_row_count: Number of rows that can still be written out,
                                 i.e. maxRowCount - Number of rows already written out
-    :param col_nums:            Column numbers of the data file which should be used in the new
-                                results file
+    :param col_info_tuple_list: A list of tuples containing the numbers, names, and python data
+                                types of the columns targeted for writing to the csv file
     :param lbl_info_values:     Data sourced from the .LBL file
     :return:                    The row count remaining after processing the data in 'data_filepath'
                                 i.e. remaining_row_count - number of rows in data_filepath
@@ -233,8 +265,11 @@ def compose_custom_rows(results_filepath,
             elif remaining_row_count > 0:
                 remaining_row_count -= 1
 
-            csv_writer.writerow(
-                [*map(lambda col_num: row[col_num - 1], col_nums), *lbl_info_values])
+            csv_writer.writerow([
+                *[extract_formatted_col_value(row, col_info_tuple) for col_info_tuple in
+                  col_info_tuple_list if extract_col_value(row, col_info_tuple).strip() != 'UNK'],
+                *lbl_info_values
+            ])
 
     return remaining_row_count
 
@@ -262,7 +297,7 @@ def main():
 
     args = parser.parse_args()
 
-    col_names, col_nums = get_col_info(TARGET_FMT_FILE, args.targetColNames)
+    col_info_tuple_list = get_col_info(TARGET_FMT_FILE, args.targetColNames)
 
     sol_to_acq_lbl_info = {}
 
@@ -291,7 +326,8 @@ def main():
                 csv_writer = csv.writer(f)
 
                 csv_writer.writerow([
-                    *map(lambda col_name: col_name.strip('\"'), col_names),
+                    *map(lambda col_info_tuple: col_info_tuple[COL_TUPLE_NAME_INDEX],
+                         col_info_tuple_list),
                     *lbl_info_keys
                 ])
 
@@ -300,7 +336,7 @@ def main():
         remaining_row_count = compose_custom_rows(args.resultsFileName,
                                                   filepath,
                                                   remaining_row_count,
-                                                  map(lambda col_num: int(col_num), col_nums),
+                                                  col_info_tuple_list,
                                                   lbl_info_values)
 
         if remaining_row_count == 0:
